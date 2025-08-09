@@ -7,6 +7,6 @@ services:
     startCommand: python app.py
     envVars:
       - key: YOUTUBE_STREAM_KEY
-        sync: false   # Set this in the Render dashboard
+        sync: false
       - key: RENDER_EXTERNAL_URL
-        sync: false   # Also set in Render dashboard: your public service URL
+        sync: false
