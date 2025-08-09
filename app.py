@@ -1,88 +1,74 @@
 import os
-import requests
-import cv2
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-import subprocess
-import threading
-from flask import Flask
 import time
+import threading
+import subprocess
+import requests
+from flask import Flask
 
 app = Flask(__name__)
 
-# Config
-MODEL = os.getenv("LLM7_MODEL", "meta-llama/Meta-Llama-3-8B-Instruct")
-API_URL = "https://api.llm7.io/v1/chat/completions"
-FONT_PATH = "static/VT323-Regular.ttf"
 YOUTUBE_STREAM_KEY = os.getenv("YOUTUBE_STREAM_KEY")
-STREAM_URL = f"rtmp://a.rtmp.youtube.com/live2/{YOUTUBE_STREAM_KEY}"
+FONT_PATH = "VT323-Regular.ttf"  # Keep this in repo root
+PING_INTERVAL = 300  # seconds
 
-# Function to query LLM7
-def query_llm7(prompt, model=MODEL):
-    data = {"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 150}
-    response = requests.post(API_URL, json=data)
-    response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"]
+# RTMP endpoint for YouTube Live ingestion
+YOUTUBE_RTMP_URL = f"rtmp://a.rtmp.youtube.com/live2/{YOUTUBE_STREAM_KEY}"
 
-# Create frame with text
-def render_frame(text, width=1920, height=1080):
-    img = Image.new("RGB", (width, height), (0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    font = ImageFont.truetype(FONT_PATH, 48)
-    draw.text((50, 50), text, font=font, fill=(0, 255, 0))
-    return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-
-# Streaming loop
-def stream_to_youtube():
-    # FFmpeg process
-    ffmpeg_cmd = [
+def start_stream():
+    """
+    Start FFmpeg to push generated video to YouTube Live.
+    This example sends a test pattern with text overlay.
+    Replace the input section with your actual frame generation if needed.
+    """
+    ffmpeg_command = [
         "ffmpeg",
-        "-y",
-        "-f", "rawvideo",
-        "-vcodec", "rawvideo",
-        "-pix_fmt", "bgr24",
-        "-s", "1920x1080",
-        "-r", "30",
-        "-i", "-",
+        "-re",
         "-f", "lavfi",
-        "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+        "-i", "testsrc=size=1280x720:rate=30",
+        "-vf", "drawtext=text='TerminalMind Live':fontcolor=white:fontsize=48:x=100:y=100",
         "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
         "-preset", "veryfast",
-        "-b:v", "4000k",
-        "-c:a", "aac",
-        "-ar", "44100",
+        "-maxrate", "3000k",
+        "-bufsize", "6000k",
+        "-pix_fmt", "yuv420p",
+        "-g", "60",
         "-f", "flv",
-        STREAM_URL
+        YOUTUBE_RTMP_URL
     ]
+    subprocess.Popen(ffmpeg_command)
 
-    process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
+def keep_alive():
+    """
+    Periodically ping the /ping endpoint so Render's free tier doesn't sleep.
+    """
+    url = os.getenv("RENDER_EXTERNAL_URL")
+    if not url:
+        print("No RENDER_EXTERNAL_URL set — keep-alive disabled.")
+        return
 
     while True:
         try:
-            q = "What is consciousness?"
-            a = query_llm7(q)
-            frames = [
-                render_frame(f"Q: {q}"),
-                render_frame(f"A: {a}")
-            ]
-            for frame in frames:
-                process.stdin.write(frame.tobytes())
-                time.sleep(2)  # 2 seconds per frame
+            print(f"Pinging {url}/ping")
+            requests.get(f"{url}/ping", timeout=10)
         except Exception as e:
-            print(f"Error in streaming loop: {e}")
-            break
-
-# Start streaming in background
-def start_streaming():
-    thread = threading.Thread(target=stream_to_youtube, daemon=True)
-    thread.start()
+            print(f"Keep-alive ping failed: {e}")
+        time.sleep(PING_INTERVAL)
 
 @app.route("/")
 def index():
-    return "TerminalMind streaming service is running."
+    return "TerminalMind stream is live to YouTube!"
+
+@app.route("/ping")
+def ping():
+    return "pong"
 
 if __name__ == "__main__":
-    start_streaming()
+    # Start YouTube stream
+    start_stream()
+
+    # Start keep-alive thread
+    threading.Thread(target=keep_alive, daemon=True).start()
+
+    # Run Flask app
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
