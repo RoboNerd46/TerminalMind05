@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: terminalmind-stream
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: YOUTUBE_STREAM_KEY
+        sync: false   # Set this in the Render dashboard
+      - key: RENDER_EXTERNAL_URL
+        sync: false   # Also set in Render dashboard: your public service URL
